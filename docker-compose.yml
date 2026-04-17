@@ -1,0 +1,138 @@
+services:
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: juice-shop
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "/nodejs/bin/node", "-e", "require('http').get('http://localhost:3000', (res) => process.exit(res.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 20s
+      timeout: 3s
+      retries: 20
+      start_period: 40s
+
+  # OWASP ZAP baseline scan (run as a one-shot job)
+  zap-baseline:
+    image: zaproxy/zap-stable:latest
+    container_name: zap-baseline
+    depends_on:
+      juice-shop:
+        condition: service_healthy
+    volumes:
+      - ./out/zap:/zap/wrk:rw
+    command:
+      [
+        "zap-baseline.py",
+        "-t",
+        "http://juice-shop:3000",
+        "-r",
+        "zap_baseline_report.html"
+      ]
+
+  # PostgreSQL database for Temporal
+  shannon-postgres:
+    image: postgres:13
+    container_name: shannon-postgres
+    environment:
+      - POSTGRES_PASSWORD=temporal
+      - POSTGRES_USER=temporal
+      - POSTGRES_DB=temporal
+    volumes:
+      - shannon-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Shannon (AI Pentester) - Temporal workflow orchestrator
+  shannon-temporal:
+    image: temporalio/auto-setup:latest
+    container_name: shannon-temporal
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_SEEDS=shannon-postgres
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - DBNAME=temporal
+    depends_on:
+      shannon-postgres:
+        condition: service_healthy
+    volumes:
+      - shannon-temporal-data:/etc/temporal
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "shannon-temporal:7233", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Temporal Web UI
+  shannon-temporal-ui:
+    image: temporalio/ui:latest
+    container_name: shannon-temporal-ui
+    ports:
+      - "8233:8080"
+    environment:
+      - TEMPORAL_ADDRESS=shannon-temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:8233
+    depends_on:
+      shannon-temporal:
+        condition: service_healthy
+
+  # Shannon Worker - The autonomous pentesting agent
+  shannon-worker:
+    build:
+      context: ./tools/shannon
+      dockerfile: Dockerfile
+    container_name: shannon-worker
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
+      - TEMPORAL_ADDRESS=shannon-temporal:7233
+    depends_on:
+      juice-shop:
+        condition: service_healthy
+      shannon-temporal:
+        condition: service_healthy
+    volumes:
+      - ./out/shannon:/app/out:rw
+      - ./workspace:/app/repos:rw
+      - ./tools/shannon/configs:/app/configs:ro
+    shm_size: 2gb
+    ipc: host
+    command: ["node", "apps/worker/dist/temporal/worker.js", "--task-queue", "shannon"]
+
+  # PentestGPT (interactive). Requires cloning the repo into ./tools/PentestGPT first.
+  pentestgpt:
+    build:
+      context: ./tools/PentestGPT
+      dockerfile: Dockerfile
+    container_name: pentestgpt
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - TERM=xterm-256color
+      - PYTHONUNBUFFERED=1
+      - PENTESTGPT_AUTH_MODE=${PENTESTGPT_AUTH_MODE:-anthropic}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./workspace:/workspace
+      # (Optional) Persist Claude Code config if you use it inside PentestGPT:
+      - claude-config:/home/pentester/.claude
+      - ccr-config:/home/pentester/.claude-code-router
+    depends_on:
+      juice-shop:
+        condition: service_healthy
+
+volumes:
+  claude-config:
+  ccr-config:
+  shannon-temporal-data:
+  shannon-postgres-data:
