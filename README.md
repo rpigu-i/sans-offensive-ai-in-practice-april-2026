@@ -51,23 +51,152 @@ git clone
 - Anthropic API key available from: https://platform.claude.com/
 - Shannon should be installed into `workshop-bundle/tools/shannon/` - clone the repository at: https://github.com/KeygraphHQ/shannon
 - PentestGPT should be installed into `workshop-bundle/tools/PentestGPT` - clone the repository at: https://github.com/greydgl/pentestgpt
-- After cloning this repository creater a new folder called `tools/` in the `workshop-bundle` directory
+- After cloning this repository create a new folder called `tools/` in the `workshop-bundle` directory
 
 ```bash
 #From within /sans-offensive-ai-in-practice-april-2026/workshop-bundle
 git clone https://github.com/KeygraphHQ/shannon tools/shannon
 git clone https://github.com/greydgl/pentestgpt tools/PentestGPT
 ```
+
 ## Initial Setup
 
-1. Set up your API key:
+### 1. Set up your API key
 ```bash
 cd workshop-bundle
 cp .env.example .env
 # Edit .env and add your ANTHROPIC_API_KEY
 ```
 
-2. Start all services:
+### 2. Patch Shannon for workshop timing
+
+Shannon's default agent turn limit (`maxTurns: 10_000`) allows each AI agent to run for thousands of iterations. This is thorough but far too slow for a live workshop — a full scan can take over 90 minutes. This patch makes the limit configurable via an environment variable so we can cap it appropriately.
+
+From `workshop-bundle/`, run:
+
+**Linux:**
+```bash
+sed -i 's/maxTurns: 10_000/maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10)/' \
+  tools/shannon/apps/worker/src/ai/claude-executor.ts
+```
+
+**macOS:**
+```bash
+sed -i '' 's/maxTurns: 10_000/maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10)/' \
+  tools/shannon/apps/worker/src/ai/claude-executor.ts
+```
+
+Verify the patch applied correctly:
+```bash
+grep "maxTurns" tools/shannon/apps/worker/src/ai/claude-executor.ts
+```
+
+You should see:
+```
+    maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10),
+```
+
+If you still see `maxTurns: 10_000`, the `sed` command didn't match. Open the file manually and replace `maxTurns: 10_000` with `maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10)` on line 224.
+
+> ℹ️ The `SHANNON_MAX_TURNS` environment variable is already set in `docker-compose.yml`. You can adjust it there without needing to rebuild the worker image.
+
+### 3. Create the Shannon configuration file
+
+Create `tools/shannon/configs/juice-shop.yaml` with the following content. This configuration pre-authenticates Shannon, focuses it on the highest-value attack surface, and excludes noise endpoints to keep within the lab time window.
+
+```yaml
+# Juice Shop pentest configuration — workshop demo tuning
+# Narrows scope to high-value findings: SQLi auth bypass, admin registration,
+# basket IDOR, B2B SSTI. Intentionally sacrifices XSS/SSRF coverage for speed.
+
+authentication:
+  login_type: form
+  login_url: "http://juice-shop:3000/#/login"
+  credentials:
+    username: "admin@juice-sh.op"
+    password: "admin123"
+  login_flow:
+    - "Type $username into the email field"
+    - "Type $password into the password field"
+    - "Click the 'Log in' button"
+  success_condition:
+    type: url_contains
+    value: "/search"
+
+rules:
+  focus:
+    - description: "Login endpoint - SQLi auth bypass"
+      type: path
+      url_path: "/rest/user/login"
+    - description: "User registration - privilege escalation"
+      type: path
+      url_path: "/api/Users"
+    - description: "Basket - IDOR"
+      type: path
+      url_path: "/rest/basket/*"
+    - description: "B2B order - SSTI"
+      type: path
+      url_path: "/b2b/v2/orders"
+    - description: "REST API generally"
+      type: path
+      url_path: "/rest/*"
+
+  avoid:
+    # Starve XSS hypothesis generation (biggest time saver)
+    - description: "Angular search route"
+      type: path
+      url_path: "/#/search"
+    - description: "Track orders page"
+      type: path
+      url_path: "/#/track-result"
+    - description: "Product pages"
+      type: path
+      url_path: "/#/product"
+    - description: "Profile page - also starves SSRF hypotheses"
+      type: path
+      url_path: "/profile"
+
+    # Static asset bloat
+    - description: "Angular bundles"
+      type: path
+      url_path: "/main.js"
+    - description: "Runtime/vendor bundles"
+      type: path
+      url_path: "/runtime.js"
+    - description: "i18n translations"
+      type: path
+      url_path: "/assets/i18n/*"
+    - description: "Public images"
+      type: path
+      url_path: "/assets/public/*"
+
+    # Noise endpoints
+    - description: "FTP honeypot"
+      type: path
+      url_path: "/ftp/*"
+    - description: "Challenge snippets"
+      type: path
+      url_path: "/snippets/*"
+    - description: "Continue-code challenge tracker"
+      type: path
+      url_path: "/rest/continue-code*"
+    - description: "Captcha endpoints"
+      type: path
+      url_path: "/rest/captcha*"
+    - description: "Logout - prevents session kills mid-test"
+      type: path
+      url_path: "/rest/user/logout"
+    - description: "Metrics"
+      type: path
+      url_path: "/metrics"
+
+pipeline:
+  max_concurrent_pipelines: 5
+  retry_preset: default
+```
+
+### 4. Start all services
+
 ```bash
 docker compose up -d
 ```
@@ -76,10 +205,12 @@ This will start:
 - **Juice Shop** - http://localhost:3000 (vulnerable web app)
 - **zap-baseline** - Zap tooling
 - **pentestgpt** - PenTestGPT tooling
-- **Shannon Temporal** - (you can validate via: nc -vz localhost 7233)  (workflow engine)
+- **Shannon Temporal** - (you can validate via: `nc -vz localhost 7233`) (workflow engine)
 - **Shannon Temporal UI** - http://localhost:8233 (monitoring dashboard)
 - **Shannon Worker** - AI pentest agent
 - **PostgreSQL** - Database for Temporal
+
+---
 
 ## Run ZAP baseline (creates HTML report)
 
@@ -89,6 +220,8 @@ docker compose run --rm zap-baseline
 ```
 This scan will take about five minutes to complete.
 ZAP baseline scan scripts are included in the official ZAP images
+
+---
 
 ## Run Shannon
 
@@ -112,53 +245,43 @@ You should see:
 Shannon is a **white-box** pentester — it analyzes the target's source code to guide its exploitation strategy. Clone the actual Juice Shop source into your workspace so Shannon has something to analyze:
 
 ```bash
-#From inside sans-offensive-ai-in-practice-april-2026/workshop-bundle run the following
-#Only if it already exists rm -rf workspace/juice-shop
+# From inside sans-offensive-ai-in-practice-april-2026/workshop-bundle
+rm -rf workspace/juice-shop
 git clone https://github.com/juice-shop/juice-shop.git workspace/juice-shop
 cd workspace/juice-shop
 git config user.email "pentest@localhost"
 git config user.name "Pentest Agent"
 cd ../..
 ```
-### Resetting the Workspace Between Runs
 
-Shannon writes intermediate findings to `.shannon/deliverables/` inside the target repo. If you run Shannon a second time without clearing this state, the new run will ingest the previous run's output and its analysis will degrade. Before each fresh run:
+The `git config` lines set a local committer identity for this repo only — Shannon creates git checkpoints during its pre-recon phase, which requires a configured user even though nothing is pushed upstream.
 
-```bash
-# From inside workshop-bundle/
-cd workspace/juice-shop
-rm -rf .shannon
-git clean -fdx
-git reset --hard
-cd ../..
-```
-
-### Create a Configuration File (Optional)
-
-Create a config in `tools/shannon/configs/juice-shop.yaml`:
-
-```yaml
-# Juice Shop pentest configuration
-rules:
-  focus:
-    - description: "Focus on API endpoints"
-      type: path
-      url_path: "/api/*"
-    - description: "Focus on REST endpoints"
-      type: path
-      url_path: "/rest/*"
-```
+> ⚠️ **Do not skip cloning the actual source.** Pointing Shannon at an empty repo causes its pre-recon agents to spin for hundreds of turns looking for code that isn't there, and can lead them to fall back on stale deliverables from previous runs — producing hallucinated findings instead of real ones.
 
 ### Start the Pentest
 
-Run the pentest workflow from inside sans-offensive-ai-in-practice-april-2026/workshop-bundle:
+Run the pentest workflow from `workshop-bundle/`:
 
 ```bash
 docker compose run --rm shannon-worker node apps/worker/dist/temporal/worker.js \
   http://juice-shop:3000 \
   /app/repos/juice-shop \
-  --task-queue shannon
+  --task-queue shannon \
+  --config /app/configs/juice-shop.yaml
 ```
+
+> ℹ️ **Path note:** `/app/repos/juice-shop` and `/app/configs/juice-shop.yaml` are paths **inside the worker container**, mapped from the host via volume mounts in `docker-compose.yml`:
+>
+> | Inside container | On host (relative to `workshop-bundle/`) |
+> |---|---|
+> | `/app/repos/juice-shop` | `./workspace/juice-shop` |
+> | `/app/configs/juice-shop.yaml` | `./tools/shannon/configs/juice-shop.yaml` |
+
+**Verify the turn cap is active.** Early in the log output you should see:
+```
+SDK Options: maxTurns=50, cwd=/app/repos/juice-shop, permissions=BYPASS
+```
+If it shows `maxTurns=10000` instead, the patch from Step 2 didn't compile into the Docker image. Run `docker compose build shannon-worker` and try again.
 
 ### Monitor Progress
 
@@ -189,6 +312,23 @@ The pentest runs through 5 phases:
 3. **Vulnerability Analysis** - 5 parallel agents (injection, xss, auth, authz, ssrf)
 4. **Exploitation** - Exploit confirmed vulnerabilities
 5. **Reporting** - Executive security report
+
+### Resetting the Workspace Between Runs
+
+Shannon writes intermediate findings to `.shannon/deliverables/` inside the target repo. If you run Shannon a second time without clearing this state, the new run will ingest the previous run's output and its analysis will degrade. Before each fresh run:
+
+```bash
+# From inside workshop-bundle/
+cd workspace/juice-shop
+rm -rf .shannon
+git clean -fdx
+git reset --hard
+cd ../..
+```
+
+`git clean -fdx` removes untracked files and directories (including anything Shannon dropped outside `.shannon/`), and `git reset --hard` reverts any file modifications Shannon's exploit attempts may have made to tracked files.
+
+---
 
 ## Run PentestGPT (Interactive)
 
@@ -238,7 +378,19 @@ If you encounter this error, the container needs to be recreated:
 docker compose up -d pentestgpt
 ```
 
+---
+
 ## Troubleshooting
+
+### Shannon Scan Taking Too Long
+
+The workshop configuration targets a ~35-40 minute scan. If scans are running significantly longer:
+
+1. **Check the turn cap is active.** Look for `maxTurns=50` in the early log output. If it shows `maxTurns=10000`, the patch wasn't compiled — run `docker compose build shannon-worker` and retry.
+
+2. **Check for stale deliverables.** If you didn't reset the workspace between runs, Shannon may be ingesting old findings and looping. Run the reset commands above.
+
+3. **Lower the turn cap.** Edit `SHANNON_MAX_TURNS` in `docker-compose.yml` — try `40` or `30`. This reduces findings depth but speeds up the scan. No rebuild needed; just restart and re-run.
 
 ### Shannon Temporal Not Starting
 
@@ -287,5 +439,3 @@ cd workshop-bundle
 docker compose down -v  # Remove volumes
 docker compose up -d    # Start fresh
 ```
-
-
