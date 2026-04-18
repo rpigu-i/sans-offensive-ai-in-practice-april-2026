@@ -141,7 +141,7 @@ rules:
 
 ### Start the Pentest
 
-Run the pentest workflow:
+Run the pentest workflow from inside sans-offensive-ai-in-practice-april-2026/workshop-bundle:
 
 ```bash
 docker compose run --rm shannon-worker node apps/worker/dist/temporal/worker.js \
