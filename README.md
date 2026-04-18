@@ -76,7 +76,7 @@ This will start:
 - **Juice Shop** - http://localhost:3000 (vulnerable web app)
 - **zap-baseline** - Zap tooling
 - **pentestgpt** - PenTestGPT tooling
-- **Shannon Temporal** - http://localhost:7233 (workflow engine)
+- **Shannon Temporal** - (you can validate via: nc -vz localhost 7233)  (workflow engine)
 - **Shannon Temporal UI** - http://localhost:8233 (monitoring dashboard)
 - **Shannon Worker** - AI pentest agent
 - **PostgreSQL** - Database for Temporal
