@@ -87,6 +87,7 @@ This will start:
 docker compose run --rm zap-baseline
 # report at: ./out/zap/zap_baseline_report.html
 ```
+This scan will take about five minutes to complete.
 ZAP baseline scan scripts are included in the official ZAP images
 
 ## Run Shannon
