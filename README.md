@@ -109,17 +109,27 @@ You should see:
 
 ### Prepare a Target Repository
 
-Shannon requires a git repository to store findings:
+Shannon is a **white-box** pentester — it analyzes the target's source code to guide its exploitation strategy. Clone the actual Juice Shop source into your workspace so Shannon has something to analyze:
 
 ```bash
 #From inside sans-offensive-ai-in-practice-april-2026/workshop-bundle run the following
-mkdir -p workspace/juice-shop
+#Only if it already exists rm -rf workspace/juice-shop
+git clone https://github.com/juice-shop/juice-shop.git workspace/juice-shop
 cd workspace/juice-shop
-git init
 git config user.email "pentest@localhost"
 git config user.name "Pentest Agent"
-echo "# Juice Shop Pentest" > README.md
-git add . && git commit -m "Initial commit"
+cd ../..
+```
+### Resetting the Workspace Between Runs
+
+Shannon writes intermediate findings to `.shannon/deliverables/` inside the target repo. If you run Shannon a second time without clearing this state, the new run will ingest the previous run's output and its analysis will degrade. Before each fresh run:
+
+```bash
+# From inside workshop-bundle/
+cd workspace/juice-shop
+rm -rf .shannon
+git clean -fdx
+git reset --hard
 cd ../..
 ```
 
