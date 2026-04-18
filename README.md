@@ -111,6 +111,7 @@ You should see:
 Shannon requires a git repository to store findings:
 
 ```bash
+#From inside sans-offensive-ai-in-practice-april-2026/workshop-bundle run the following
 mkdir -p workspace/juice-shop
 cd workspace/juice-shop
 git init
