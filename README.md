@@ -54,6 +54,7 @@ git clone
 - After cloning this repository creater a new folder called `tools/` in the `workshop-bundle` directory
 
 ```bash
+#From in side /sans-offensive-ai-in-practice-april-2026/workshop-bundle
 git clone https://github.com/KeygraphHQ/shannon tools/shannon
 git clone https://github.com/greydgl/pentestgpt tools/PentestGPT
 ```
