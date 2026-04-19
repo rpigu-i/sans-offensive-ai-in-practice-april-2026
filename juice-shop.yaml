@@ -1,7 +1,6 @@
 # Juice Shop pentest configuration — workshop demo tuning
-# Narrows scope to high-value Juice Shop findings: SQLi auth bypass, admin
-# registration, basket IDOR, B2B SSTI. Intentionally sacrifices XSS coverage
-# for demo speed.
+# Critical path budget: pre-recon + recon + slowest(vuln+exploit) + report ≤ 35 min
+# Strategy: narrow focus aggressively, starve every agent's hypothesis set.
 
 authentication:
   login_type: form
@@ -19,10 +18,13 @@ authentication:
 
 rules:
   focus:
-    - description: "Login endpoint - SQLi auth bypass"
+    # Keep focus tight — each focus rule pulls agent attention toward it.
+    # Five focus rules is already a lot; I'd cut REST-generally since it
+    # re-widens what the specific rules narrowed.
+    - description: "Login endpoint - SQLi auth bypass (the demo money shot)"
       type: path
       url_path: "/rest/user/login"
-    - description: "User registration - privilege escalation"
+    - description: "User registration - mass assignment privilege escalation"
       type: path
       url_path: "/api/Users"
     - description: "Basket - IDOR"
@@ -31,12 +33,51 @@ rules:
     - description: "B2B order - SSTI"
       type: path
       url_path: "/b2b/v2/orders"
-    - description: "REST API generally"
-      type: path
-      url_path: "/rest/*"
 
   avoid:
-    # Starve XSS hypothesis generation
+    # --- NEW: Auth/authz noise that burned 26 min last run ---
+    - description: "Password reset flow - slow email-dependent exploit chains"
+      type: path
+      url_path: "/rest/user/reset-password"
+    - description: "Security questions - dead-end auth vector"
+      type: path
+      url_path: "/rest/user/security-question"
+    - description: "2FA endpoints - out of scope for demo"
+      type: path
+      url_path: "/rest/2fa/*"
+    - description: "OAuth/SSO - slow third-party redirect chains"
+      type: path
+      url_path: "/rest/saveLoginIp"
+    - description: "Data export - auth exploit agent rabbit hole"
+      type: path
+      url_path: "/rest/user/data-export"
+    - description: "Change password - overlaps with auth bypass demo"
+      type: path
+      url_path: "/rest/user/change-password"
+
+    # --- NEW: Additional XSS sinks the agent tends to discover ---
+    - description: "Complaint form - stored XSS vector"
+      type: path
+      url_path: "/#/complain"
+    - description: "Contact form"
+      type: path
+      url_path: "/#/contact"
+    - description: "Feedback page"
+      type: path
+      url_path: "/#/contact/feedback"
+    - description: "Chatbot - SSRF/XSS hybrid surface"
+      type: path
+      url_path: "/rest/chatbot/*"
+
+    # --- NEW: Explicit HTTP method restrictions (auth-exploit burns cycles on these) ---
+    - description: "Skip OPTIONS preflight testing"
+      type: method
+      url_path: "OPTIONS"
+    - description: "Skip HEAD requests"
+      type: method
+      url_path: "HEAD"
+
+    # --- From your existing config (unchanged) ---
     - description: "Angular search route"
       type: path
       url_path: "/#/search"
@@ -46,11 +87,9 @@ rules:
     - description: "Product pages"
       type: path
       url_path: "/#/product"
-    - description: "Profile page - starves SSRF hypothesis too"
+    - description: "Profile page - also starves SSRF hypotheses"
       type: path
       url_path: "/profile"
-
-    # Static asset bloat
     - description: "Angular bundles"
       type: path
       url_path: "/main.js"
@@ -63,8 +102,6 @@ rules:
     - description: "Public images"
       type: path
       url_path: "/assets/public/*"
-
-    # Noise endpoints
     - description: "FTP honeypot"
       type: path
       url_path: "/ftp/*"
@@ -83,6 +120,12 @@ rules:
     - description: "Metrics"
       type: path
       url_path: "/metrics"
+    - description: "Swagger/API docs - read-only, no exploit surface"
+      type: path
+      url_path: "/api-docs"
+    - description: "Static HTML shell"
+      type: path
+      url_path: "/index.html"
 
 pipeline:
   max_concurrent_pipelines: 5
