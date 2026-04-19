@@ -45,7 +45,7 @@ sans-ai-workshop-april-2026/
 
 - Clone this repository
 ```bash
-git clone 
+git clone git@github.com:rpigu-i/sans-offensive-ai-in-practice-april-2026.git
 ```
 - Install Docker and Docker Compose. This can be found at: https://www.docker.com/products/docker-desktop/
 - Anthropic API key available from: https://platform.claude.com/
