@@ -68,45 +68,12 @@ cp .env.example .env
 # Edit .env and add your ANTHROPIC_API_KEY
 ```
 
-### 2. Patch Shannon for workshop timing
+### 2. Create the Shannon configuration file
 
-Shannon's default agent turn limit (`maxTurns: 10_000`) allows each AI agent to run for thousands of iterations. This is thorough but far too slow for a live workshop — a full scan can take over 90 minutes. This patch makes the limit configurable via an environment variable so we can cap it appropriately.
-
-From `workshop-bundle/`, run:
-
-**Linux:**
-```bash
-sed -i 's/maxTurns: 10_000/maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10)/' \
-  tools/shannon/apps/worker/src/ai/claude-executor.ts
-```
-
-**macOS:**
-```bash
-sed -i '' 's/maxTurns: 10_000/maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10)/' \
-  tools/shannon/apps/worker/src/ai/claude-executor.ts
-```
-
-Verify the patch applied correctly:
-```bash
-grep "maxTurns" tools/shannon/apps/worker/src/ai/claude-executor.ts
-```
-
-You should see:
-```
-    maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10),
-```
-
-If you still see `maxTurns: 10_000`, the `sed` command didn't match. Open the file manually and replace `maxTurns: 10_000` with `maxTurns: parseInt(process.env.SHANNON_MAX_TURNS || "120", 10)` on line 224.
-
-> ℹ️ The `SHANNON_MAX_TURNS` environment variable is already set in `docker-compose.yml`. You can adjust it there without needing to rebuild the worker image.
-
-### 3. Create the Shannon configuration file
-
-Create `tools/shannon/configs/juice-shop.yaml` with the following content. This configuration pre-authenticates Shannon, focuses it on the highest-value attack surface, and excludes noise endpoints to keep within the lab time window.
+Create `tools/shannon/configs/juice-shop.yaml` with the following content. This configuration pre-authenticates Shannon, focuses it on the highest-value attack surface, and excludes noise endpoints to keep the scan within the workshop time window.
 
 ```yaml
 # Juice Shop pentest configuration — workshop demo tuning
-# Critical path budget: pre-recon + recon + slowest(vuln+exploit) + report ≤ 35 min
 # Strategy: narrow focus aggressively, starve every agent's hypothesis set.
 
 authentication:
@@ -126,8 +93,7 @@ authentication:
 rules:
   focus:
     # Keep focus tight — each focus rule pulls agent attention toward it.
-    # Five focus rules is already a lot; I'd cut REST-generally since it
-    # re-widens what the specific rules narrowed.
+    # Four specific paths produces the core demo findings without re-widening.
     - description: "Login endpoint - SQLi auth bypass (the demo money shot)"
       type: path
       url_path: "/rest/user/login"
@@ -142,7 +108,7 @@ rules:
       url_path: "/b2b/v2/orders"
 
   avoid:
-    # --- NEW: Auth/authz noise that burned 26 min last run ---
+    # --- Auth/authz rabbit holes ---
     - description: "Password reset flow - slow email-dependent exploit chains"
       type: path
       url_path: "/rest/user/reset-password"
@@ -162,7 +128,7 @@ rules:
       type: path
       url_path: "/rest/user/change-password"
 
-    # --- NEW: Additional XSS sinks the agent tends to discover ---
+    # --- XSS sinks the agent tends to explore ---
     - description: "Complaint form - stored XSS vector"
       type: path
       url_path: "/#/complain"
@@ -176,7 +142,7 @@ rules:
       type: path
       url_path: "/rest/chatbot/*"
 
-    # --- NEW: Explicit HTTP method restrictions (auth-exploit burns cycles on these) ---
+    # --- HTTP method restrictions ---
     - description: "Skip OPTIONS preflight testing"
       type: method
       url_path: "OPTIONS"
@@ -184,7 +150,7 @@ rules:
       type: method
       url_path: "HEAD"
 
-    # --- From your existing config (unchanged) ---
+    # --- Frontend routes (XSS hypothesis starving) ---
     - description: "Angular search route"
       type: path
       url_path: "/#/search"
@@ -197,6 +163,8 @@ rules:
     - description: "Profile page - also starves SSRF hypotheses"
       type: path
       url_path: "/profile"
+
+    # --- Static assets ---
     - description: "Angular bundles"
       type: path
       url_path: "/main.js"
@@ -209,6 +177,8 @@ rules:
     - description: "Public images"
       type: path
       url_path: "/assets/public/*"
+
+    # --- Noise endpoints ---
     - description: "FTP honeypot"
       type: path
       url_path: "/ftp/*"
@@ -239,7 +209,7 @@ pipeline:
   retry_preset: default
 ```
 
-### 4. Start all services
+### 3. Start all services
 
 ```bash
 docker compose up -d
@@ -320,12 +290,6 @@ docker compose run --rm shannon-worker node apps/worker/dist/temporal/worker.js 
 > |---|---|
 > | `/app/repos/juice-shop` | `./workspace/juice-shop` |
 > | `/app/configs/juice-shop.yaml` | `./tools/shannon/configs/juice-shop.yaml` |
-
-**Verify the turn cap is active.** Early in the log output you should see:
-```
-SDK Options: maxTurns=50, cwd=/app/repos/juice-shop, permissions=BYPASS
-```
-If it shows `maxTurns=10000` instead, the patch from Step 2 didn't compile into the Docker image. Run `docker compose build shannon-worker` and try again.
 
 ### Monitor Progress
 
@@ -428,13 +392,13 @@ docker compose up -d pentestgpt
 
 ### Shannon Scan Taking Too Long
 
-The workshop configuration targets a ~35-40 minute scan. If scans are running significantly longer:
+Shannon scan durations can vary based on the target's attack surface and the AI agents' exploration paths. If scans consistently run long:
 
-1. **Check the turn cap is active.** Look for `maxTurns=50` in the early log output. If it shows `maxTurns=10000`, the patch wasn't compiled — run `docker compose build shannon-worker` and retry.
+1. **Check for stale deliverables.** If you didn't reset the workspace between runs, Shannon may be ingesting old findings and looping. Run the reset commands in the "Resetting the Workspace Between Runs" section.
 
-2. **Check for stale deliverables.** If you didn't reset the workspace between runs, Shannon may be ingesting old findings and looping. Run the reset commands above.
+2. **Verify the config is loading.** Early in the worker log output, look for `Configuration file OK` with `configPath: '/app/configs/juice-shop.yaml'`. If this is missing, the `--config` flag isn't being picked up and the scan is running with no scope limits.
 
-3. **Lower the turn cap.** Edit `SHANNON_MAX_TURNS` in `docker-compose.yml` — try `40` or `30`. This reduces findings depth but speeds up the scan. No rebuild needed; just restart and re-run.
+3. **Narrow the `focus` rules further.** Fewer focus paths in `juice-shop.yaml` produces fewer vulnerability hypotheses, which means less work in the exploit phase. Consider trimming to just `/rest/user/login` and `/api/Users` for the fastest possible demo.
 
 ### Shannon Temporal Not Starting
 
