@@ -1,0 +1,89 @@
+# Juice Shop pentest configuration — workshop demo tuning
+# Narrows scope to high-value Juice Shop findings: SQLi auth bypass, admin
+# registration, basket IDOR, B2B SSTI. Intentionally sacrifices XSS coverage
+# for demo speed.
+
+authentication:
+  login_type: form
+  login_url: "http://juice-shop:3000/#/login"
+  credentials:
+    username: "admin@juice-sh.op"
+    password: "admin123"
+  login_flow:
+    - "Type $username into the email field"
+    - "Type $password into the password field"
+    - "Click the 'Log in' button"
+  success_condition:
+    type: url_contains
+    value: "/search"
+
+rules:
+  focus:
+    - description: "Login endpoint - SQLi auth bypass"
+      type: path
+      url_path: "/rest/user/login"
+    - description: "User registration - privilege escalation"
+      type: path
+      url_path: "/api/Users"
+    - description: "Basket - IDOR"
+      type: path
+      url_path: "/rest/basket/*"
+    - description: "B2B order - SSTI"
+      type: path
+      url_path: "/b2b/v2/orders"
+    - description: "REST API generally"
+      type: path
+      url_path: "/rest/*"
+
+  avoid:
+    # Starve XSS hypothesis generation
+    - description: "Angular search route"
+      type: path
+      url_path: "/#/search"
+    - description: "Track orders page"
+      type: path
+      url_path: "/#/track-result"
+    - description: "Product pages"
+      type: path
+      url_path: "/#/product"
+    - description: "Profile page - starves SSRF hypothesis too"
+      type: path
+      url_path: "/profile"
+
+    # Static asset bloat
+    - description: "Angular bundles"
+      type: path
+      url_path: "/main.js"
+    - description: "Runtime/vendor bundles"
+      type: path
+      url_path: "/runtime.js"
+    - description: "i18n translations"
+      type: path
+      url_path: "/assets/i18n/*"
+    - description: "Public images"
+      type: path
+      url_path: "/assets/public/*"
+
+    # Noise endpoints
+    - description: "FTP honeypot"
+      type: path
+      url_path: "/ftp/*"
+    - description: "Challenge snippets"
+      type: path
+      url_path: "/snippets/*"
+    - description: "Continue-code challenge tracker"
+      type: path
+      url_path: "/rest/continue-code*"
+    - description: "Captcha endpoints"
+      type: path
+      url_path: "/rest/captcha*"
+    - description: "Logout - prevents session kills mid-test"
+      type: path
+      url_path: "/rest/user/logout"
+    - description: "Metrics"
+      type: path
+      url_path: "/metrics"
+
+pipeline:
+  max_concurrent_pipelines: 5
+  retry_preset: default
